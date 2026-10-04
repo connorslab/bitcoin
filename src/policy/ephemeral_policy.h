@@ -43,7 +43,8 @@ class TxValidationState;
 
 /** Must be called for each transaction once transaction fees are known.
  * Does context-less checks about a single transaction.
- * @returns false if the fee is non-zero and dust exists, populating state. True otherwise.
+ * @returns false if the base fee is non-zero or the modified fee is outside
+ * [-calculated dust penalty, 0] and dust exists, populating state. True otherwise.
  */
 bool PreCheckEphemeralTx(const CTransaction& tx, CFeeRate dust_relay_rate, CAmount base_fee, CAmount mod_fee, TxValidationState& state);
 
