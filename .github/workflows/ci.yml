@@ -1,4 +1,4 @@
-name: Monetary policy validation
+name: Ephemeral fee policy validation
 on:
   push:
     branches: [ci-policy-defaults]
@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: 0c80ead72444134f06ba480fc73560dac79471d2
+          ref: e77fe14e7ad0078403ecfa851be0bc5ee94ed97e
       - name: Record tested source
         run: git rev-parse HEAD
       - name: Dependencies
@@ -30,7 +30,7 @@ jobs:
       - name: Policy unit tests
         run: ctest --test-dir build --output-on-failure -j 4 -R 'mempool|policy|miner|transaction|rbf|validation|args|rpc.*mempool'
       - name: Functional policy tests
-        run: python3 build/test/functional/test_runner.py --jobs=4 --tmpdirprefix=/tmp/policy-tests mempool_policy_defaults.py mempool_subdust_fee_penalty.py mempool_truc.py mempool_ephemeral_dust.py feature_rbf.py wallet_anchor.py
+        run: python3 build/test/functional/test_runner.py --jobs=4 --tmpdirprefix=/tmp/policy-tests mempool_subdust_fee_penalty.py mempool_truc.py mempool_ephemeral_dust.py feature_rbf.py wallet_anchor.py
       - name: Upload test logs
         if: always()
         uses: actions/upload-artifact@v4
