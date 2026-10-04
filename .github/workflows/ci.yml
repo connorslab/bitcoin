@@ -1,4 +1,4 @@
-name: Ephemeral fee policy validation
+name: TRUC default policy validation
 on:
   push:
     branches: [ci-policy-defaults]
@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: e77fe14e7ad0078403ecfa851be0bc5ee94ed97e
+          ref: 05893c31ae8bdf7e341864bb5fa8594a005f1086
       - name: Record tested source
         run: git rev-parse HEAD
       - name: Dependencies
