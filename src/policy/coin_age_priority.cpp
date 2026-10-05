@@ -209,6 +209,12 @@ void BlockAssembler::addPriorityTxs(const CTxMemPool& mempool, int &nPackagesSel
 
     vecPriority.reserve(mempool.mapTx.size());
     for (auto mi = mempool.mapTx.begin(); mi != mempool.mapTx.end(); ++mi) {
+        // Priority selection considers transactions individually, so it cannot
+        // guarantee that ephemeral dust is spent in the same block. Leave
+        // these transactions to fee-based package selection instead.
+        if (!GetDust(mi->GetTx(), mempool.m_opts.dust_relay_feerate).empty()) {
+            continue;
+        }
         double dPriority = mi->GetPriority(nHeight);
         CAmount dummy;
         mempool.ApplyDeltas(mi->GetTx().GetHash(), dPriority, dummy);
