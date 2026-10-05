@@ -1,4 +1,4 @@
-name: Ephemeral dust bound validation
+name: TRUC priority-space validation
 on:
   push:
     branches: [ci-policy-defaults]
@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: e155555218104959bb4172707b02ce2fd2413489
+          ref: e59d02ffa3ee75903681fd3e98a305e0f8b02e0b
       - name: Record tested source
         run: git rev-parse HEAD
       - name: Dependencies
@@ -30,7 +30,25 @@ jobs:
       - name: Policy unit tests
         run: ctest --test-dir build --output-on-failure -j 4 -R 'mempool|policy|miner|transaction|rbf|validation|args|rpc.*mempool'
       - name: Functional policy tests
-        run: python3 build/test/functional/test_runner.py --jobs=4 --tmpdirprefix=/tmp/policy-tests mempool_subdust_fee_penalty.py mempool_truc.py mempool_ephemeral_dust.py feature_rbf.py wallet_anchor.py
+        run: python3 build/test/functional/test_runner.py --jobs=4 --tmpdirprefix=/tmp/policy-tests mempool_subdust_fee_penalty.py mempool_truc.py mempool_ephemeral_dust.py feature_rbf.py wallet_anchor.py mining_ephemeral_priority.py mining_coin_age_priority.py mining_prioritisetransaction.py
+      - name: Test combined with ephemeral fee fix
+        run: |
+          git fetch origin e155555218104959bb4172707b02ce2fd2413489 --depth=2
+          git diff e155555218104959bb4172707b02ce2fd2413489^ e155555218104959bb4172707b02ce2fd2413489 -- src/validation.cpp | git apply
+          cmake --build build -j 4
+          python3 build/test/functional/mining_ephemeral_priority.py --test-subdust-penalty --tmpdir=/tmp/priority-combined
+      - name: Verify regression fails without priority fix
+        run: |
+          git fetch origin 05893c31ae8bdf7e341864bb5fa8594a005f1086 --depth=1
+          git restore --source=05893c31ae8bdf7e341864bb5fa8594a005f1086 -- src/policy/coin_age_priority.cpp
+          cmake --build build -j 4
+          python3 - <<'PY'
+          import subprocess
+          r = subprocess.run(['python3', 'build/test/functional/mining_ephemeral_priority.py', '--test-subdust-penalty', '--tmpdir=/tmp/priority-control'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+          print(r.stdout)
+          assert r.returncode != 0, 'Regression unexpectedly passed without the fix'
+          assert 'assert parent.hash not in self.template_txids()' in r.stdout, 'Unexpected failure instead of unpaired parent selection'
+          PY
       - name: Upload test logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -38,4 +56,6 @@ jobs:
           name: policy-test-logs
           path: |
             /tmp/policy-tests
+            /tmp/priority-combined
+            /tmp/priority-control
             build/Testing/Temporary
