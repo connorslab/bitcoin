@@ -1,4 +1,4 @@
-name: TRUC default policy validation
+name: Ephemeral dust bound validation
 on:
   push:
     branches: [ci-policy-defaults]
@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: 05893c31ae8bdf7e341864bb5fa8594a005f1086
+          ref: 31ebe461649e4be92bdf41c55dbdd59dc1cfe3a8
       - name: Record tested source
         run: git rev-parse HEAD
       - name: Dependencies
