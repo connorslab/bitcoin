@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: d54ef1e1ae
+          ref: d54ef1e1ae895c22ee9b8d9cb556c16cf8bcc42e
       - name: Record tested source
         run: git rev-parse HEAD
       - name: Dependencies
