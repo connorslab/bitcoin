@@ -1,4 +1,4 @@
-name: Priority mining fee-floor validation
+name: TRUC default validation
 on:
   push:
     branches: [ci-policy-defaults]
@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: 03ff46fde3ac7a3b04321cf5d1816b2b2b679057
+          ref: 0f7236571c2cccf7309a29b23a805e2c5d86c551
       - name: Record tested source
         run: git rev-parse HEAD
       - name: Dependencies
@@ -31,26 +31,14 @@ jobs:
       - name: Policy unit tests
         run: ctest --test-dir build --output-on-failure -j 4 -R 'mempool|policy|miner|transaction|rbf|validation|args|rpc.*mempool'
       - name: Functional policy tests
-        run: python3 build/test/functional/test_runner.py --jobs=4 --tmpdirprefix=/tmp/policy-tests mempool_subdust_fee_penalty.py mempool_truc.py mempool_ephemeral_dust.py feature_rbf.py wallet_anchor.py mining_priority_fee.py mining_coin_age_priority.py mining_prioritisetransaction.py
+        run: python3 build/test/functional/test_runner.py --jobs=4 --tmpdirprefix=/tmp/policy-tests mempool_subdust_fee_penalty.py mempool_truc.py mempool_ephemeral_dust.py feature_rbf.py wallet_anchor.py mining_coin_age_priority.py mining_prioritisetransaction.py
       - name: Test combined with current PR 438
         run: |
           git fetch origin e155555218104959bb4172707b02ce2fd2413489 --depth=2
           git diff e155555218104959bb4172707b02ce2fd2413489^ e155555218104959bb4172707b02ce2fd2413489 -- src/validation.cpp test/functional/mempool_ephemeral_dust.py | git apply
           cmake --build build -j 4
-          python3 build/test/functional/mining_priority_fee.py --test-subdust-penalty --tmpdir=/tmp/priority-combined
+          python3 build/test/functional/mempool_truc.py --tmpdir=/tmp/truc-combined
           python3 build/test/functional/mempool_ephemeral_dust.py --tmpdir=/tmp/ephemeral-combined
-      - name: Verify regression fails without fee-floor enforcement
-        run: |
-          git fetch origin 58398baf33e588779685ead478e6397bb28ed3d6 --depth=1
-          git restore --source=58398baf33e588779685ead478e6397bb28ed3d6 -- src/policy/coin_age_priority.cpp
-          cmake --build build -j 4
-          python3 - <<'PY'
-          import subprocess
-          r = subprocess.run(['python3', 'build/test/functional/mining_priority_fee.py', '--tmpdir=/tmp/priority-control'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-          print(r.stdout)
-          assert r.returncode != 0, 'Regression unexpectedly passed without fee-floor enforcement'
-          assert 'Priority selection bypassed the mining fee floor' in r.stdout, 'Unexpected failure instead of fee-floor bypass'
-          PY
       - uses: actions/cache/save@v4
         if: always()
         with:
@@ -63,7 +51,7 @@ jobs:
           name: policy-test-logs
           path: |
             /tmp/policy-tests
-            /tmp/priority-combined
+            /tmp/truc-combined
             /tmp/ephemeral-combined
             /tmp/priority-control
             build/Testing/Temporary
