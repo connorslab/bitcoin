@@ -1,4 +1,4 @@
-name: TRUC default validation
+name: Ephemeral dust rebased validation
 on:
   push:
     branches: [ci-policy-defaults]
@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: d54ef1e1ae895c22ee9b8d9cb556c16cf8bcc42e
+          ref: 67ae65c9f3013b716d4e5e4caac267d3471c5aee
       - name: Record tested source
         run: git rev-parse HEAD
       - name: Dependencies
@@ -28,21 +28,10 @@ jobs:
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_GUI=OFF -DBUILD_BENCH=OFF -DENABLE_IPC=OFF -DWITH_BDB=OFF -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       - name: Build
         run: cmake --build build -j 4
-      - name: Compare topology replacement costs
-        run: |
-          echo 'IyEvdXNyL2Jpbi9lbnYgcHl0aG9uMwpmcm9tIGRlY2ltYWwgaW1wb3J0IERlY2ltYWwKZnJvbSB0ZXN0X2ZyYW1ld29yay50ZXN0X2ZyYW1ld29yayBpbXBvcnQgQml0Y29pblRlc3RGcmFtZXdvcmsKZnJvbSB0ZXN0X2ZyYW1ld29yay53YWxsZXQgaW1wb3J0IE1pbmlXYWxsZXQKZnJvbSB0ZXN0X2ZyYW1ld29yay5tZXNzYWdlcyBpbXBvcnQgQ1R4T3V0LCBDVHhJbiwgQ091dFBvaW50LCBDVHhJbldpdG5lc3MKZnJvbSB0ZXN0X2ZyYW1ld29yay5zY3JpcHRfdXRpbCBpbXBvcnQgUEFZX1RPX0FOQ0hPUgpmcm9tIHRlc3RfZnJhbWV3b3JrLnV0aWwgaW1wb3J0IGFzc2VydF9lcXVhbAoKY2xhc3MgRXhwZXJpbWVudChCaXRjb2luVGVzdEZyYW1ld29yayk6CiAgICBkZWYgc2V0X3Rlc3RfcGFyYW1zKHNlbGYpOgogICAgICAgIHNlbGYubnVtX25vZGVzID0gMQogICAgICAgIHNlbGYuc2V0dXBfY2xlYW5fY2hhaW4gPSBUcnVlCiAgICAgICAgIyBJc29sYXRlIHRvcG9sb2d5L1JCRiBmcm9tIGZlZSBhZG1pc3Npb24gYW5kIHRoZSBzZXBhcmF0ZSBkdXN0LXBlbmFsdHkgZml4LgogICAgICAgIHNlbGYuZXh0cmFfYXJncyA9IFtbIi1jb3JlcG9saWN5PTAiLCAiLWFjY2VwdG5vbnN0ZHR4bj0wIiwgIi1wZXJzaXN0bWVtcG9vbD0wIiwKICAgICAgICAgICAgICAgICAgICAgICAgICAgICItbWlucmVsYXl0eGZlZT0wIiwgIi1zdWJkdXN0ZmVlcGVuYWx0eT0wIl1dCgogICAgZGVmIHJ1bl90ZXN0KHNlbGYpOgogICAgICAgIG5vZGUgPSBzZWxmLm5vZGVzWzBdCiAgICAgICAgd2FsbGV0ID0gTWluaVdhbGxldChub2RlKQogICAgICAgIHNlbGYuZ2VuZXJhdGUod2FsbGV0LCAxMDEpCiAgICAgICAgcGFyZW50ID0gd2FsbGV0LmNyZWF0ZV9zZWxmX3RyYW5zZmVyKHZlcnNpb249MywgZmVlX3JhdGU9MCwgY29uZmlybWVkX29ubHk9VHJ1ZSlbInR4Il0KICAgICAgICBwYXJlbnQudm91dC5hcHBlbmQoQ1R4T3V0KDAsIFBBWV9UT19BTkNIT1IpKQogICAgICAgIHBhcmVudC5yZWhhc2goKQogICAgICAgIHNwb25zb3IgPSB3YWxsZXQuZ2V0X3V0eG8oY29uZmlybWVkX29ubHk9VHJ1ZSkKCiAgICAgICAgZGVmIGNoaWxkX3dpdGhfZmVlKGZlZSk6CiAgICAgICAgICAgIGNoaWxkID0gd2FsbGV0LmNyZWF0ZV9zZWxmX3RyYW5zZmVyKHZlcnNpb249MywgZmVlX3JhdGU9MCwgdXR4b190b19zcGVuZD1zcG9uc29yKVsidHgiXQogICAgICAgICAgICBjaGlsZC52aW4uYXBwZW5kKENUeEluKENPdXRQb2ludChwYXJlbnQuc2hhMjU2LCAxKSkpCiAgICAgICAgICAgIGNoaWxkLndpdC52dHhpbndpdC5hcHBlbmQoQ1R4SW5XaXRuZXNzKCkpCiAgICAgICAgICAgIGNoaWxkLnZvdXRbMF0ublZhbHVlIC09IGZlZQogICAgICAgICAgICBjaGlsZC5yZWhhc2goKQogICAgICAgICAgICByZXR1cm4gY2hpbGQKCiAgICAgICAgY2hpbGQgPSBjaGlsZF93aXRoX2ZlZSgxMDAwKQogICAgICAgIGRlc2NlbmRhbnRfdXR4byA9IGRpY3Qoc3BvbnNvciwgdHhpZD1jaGlsZC5oYXNoLCB2b3V0PTAsCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIHZhbHVlPURlY2ltYWwoY2hpbGQudm91dFswXS5uVmFsdWUpLzEwMDAwMDAwMCwgaGVpZ2h0PTApCiAgICAgICAgZGVzY2VuZGFudCA9IHdhbGxldC5jcmVhdGVfc2VsZl90cmFuc2Zlcih2ZXJzaW9uPTMsIHV0eG9fdG9fc3BlbmQ9ZGVzY2VuZGFudF91dHhvLAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIGZlZT1EZWNpbWFsKCIwLjAwMDEwMDAwIikpWyJ0eCJdCiAgICAgICAgcmVwbGFjZW1lbnQgPSBjaGlsZF93aXRoX2ZlZSgyMDAwKQogICAgICAgIGV4cGVuc2l2ZSA9IGNoaWxkX3dpdGhfZmVlKDEyMDAwKQogICAgICAgIGZvciB3aXRoX2Rlc2NlbmRhbnQgaW4gKEZhbHNlLCBUcnVlKToKICAgICAgICAgICAgZm9yIG1vZGUgaW4gKCJhY2NlcHQiLCAiZW5mb3JjZSIpOgogICAgICAgICAgICAgICAgc2VsZi5yZXN0YXJ0X25vZGUoMCwgZXh0cmFfYXJncz1zZWxmLmV4dHJhX2FyZ3NbMF0rW2YiLW1lbXBvb2x0cnVjPXttb2RlfSJdKQogICAgICAgICAgICAgICAgYXNzZXJ0X2VxdWFsKG5vZGUuc3VibWl0cGFja2FnZShbcGFyZW50LnNlcmlhbGl6ZSgpLmhleCgpLCBjaGlsZC5zZXJpYWxpemUoKS5oZXgoKV0pWyJwYWNrYWdlX21zZyJdLCAic3VjY2VzcyIpCiAgICAgICAgICAgICAgICBkZXNjZW5kYW50X3Jlc3VsdCA9IE5vbmUKICAgICAgICAgICAgICAgIGlmIHdpdGhfZGVzY2VuZGFudDoKICAgICAgICAgICAgICAgICAgICBkZXNjZW5kYW50X3Jlc3VsdCA9IG5vZGUudGVzdG1lbXBvb2xhY2NlcHQoW2Rlc2NlbmRhbnQuc2VyaWFsaXplKCkuaGV4KCldKVswXQogICAgICAgICAgICAgICAgICAgIGFzc2VydF9lcXVhbChkZXNjZW5kYW50X3Jlc3VsdFsiYWxsb3dlZCJdLCBtb2RlID09ICJhY2NlcHQiKQogICAgICAgICAgICAgICAgICAgIGlmIG1vZGUgPT0gImFjY2VwdCI6CiAgICAgICAgICAgICAgICAgICAgICAgIG5vZGUuc2VuZHJhd3RyYW5zYWN0aW9uKGRlc2NlbmRhbnQuc2VyaWFsaXplKCkuaGV4KCkpCiAgICAgICAgICAgICAgICAgICAgZWxzZToKICAgICAgICAgICAgICAgICAgICAgICAgYXNzZXJ0X2VxdWFsKGRlc2NlbmRhbnRfcmVzdWx0WyJyZWplY3QtcmVhc29uIl0sICJ0cnVjLWFuY2VzdG9ycy10b29tYW55IikKICAgICAgICAgICAgICAgIHJlc3VsdCA9IG5vZGUudGVzdG1lbXBvb2xhY2NlcHQoW3JlcGxhY2VtZW50LnNlcmlhbGl6ZSgpLmhleCgpXSlbMF0KICAgICAgICAgICAgICAgIGFzc2VydF9lcXVhbChyZXN1bHRbImFsbG93ZWQiXSwgbm90KHdpdGhfZGVzY2VuZGFudCBhbmQgbW9kZSA9PSAiYWNjZXB0IikpCiAgICAgICAgICAgICAgICBpZiBub3QgcmVzdWx0WyJhbGxvd2VkIl06CiAgICAgICAgICAgICAgICAgICAgYXNzZXJ0X2VxdWFsKHJlc3VsdFsicmVqZWN0LXJlYXNvbiJdLCAiaW5zdWZmaWNpZW50IGZlZSIpCiAgICAgICAgICAgICAgICAgICAgbm9kZS5zZW5kcmF3dHJhbnNhY3Rpb24oZXhwZW5zaXZlLnNlcmlhbGl6ZSgpLmhleCgpKQogICAgICAgICAgICAgICAgZWxzZToKICAgICAgICAgICAgICAgICAgICBub2RlLnNlbmRyYXd0cmFuc2FjdGlvbihyZXBsYWNlbWVudC5zZXJpYWxpemUoKS5oZXgoKSkKICAgICAgICAgICAgICAgIHNlbGYubG9nLmluZm8oIk1FQVNVUkVNRU5UIG1vZGU9JXMgZGVzY2VuZGFudD0lcyBjaGlsZF92c2l6ZT0lZCBvcmlnaW5hbF9mZWU9MTAwMCBkZXNjZW5kYW50X2ZlZT0xMDAwMCByZXBsYWNlbWVudF9mZWU9MjAwMCBhbGxvd2VkPSVzIGRlc2NlbmRhbnRfcmVzdWx0PSVzIiwKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgbW9kZSwgd2l0aF9kZXNjZW5kYW50LCBjaGlsZC5nZXRfdnNpemUoKSwgcmVzdWx0WyJhbGxvd2VkIl0sIGRlc2NlbmRhbnRfcmVzdWx0KQoKaWYgX19uYW1lX18gPT0gIl9fbWFpbl9fIjoKICAgIEV4cGVyaW1lbnQoX19maWxlX18pLm1haW4oKQ==' | base64 --decode > test/functional/truc_policy_experiment.py
-          python3 test/functional/truc_policy_experiment.py --configfile=build/test/config.ini --tmpdir=/tmp/truc-experiment
       - name: Policy unit tests
         run: ctest --test-dir build --output-on-failure -j 4 -R 'mempool|policy|miner|transaction|rbf|validation|args|rpc.*mempool'
       - name: Functional policy tests
-        run: python3 build/test/functional/test_runner.py --jobs=4 --tmpdirprefix=/tmp/policy-tests mempool_subdust_fee_penalty.py mempool_truc.py mempool_ephemeral_dust.py feature_rbf.py wallet_anchor.py mining_coin_age_priority.py mining_prioritisetransaction.py
-      - name: Test combined with current PR 438
-        run: |
-          git fetch origin e155555218104959bb4172707b02ce2fd2413489 --depth=2
-          git diff e155555218104959bb4172707b02ce2fd2413489^ e155555218104959bb4172707b02ce2fd2413489 -- src/validation.cpp test/functional/mempool_ephemeral_dust.py | git apply
-          cmake --build build -j 4
-          python3 build/test/functional/mempool_truc.py --tmpdir=/tmp/truc-combined
-          python3 build/test/functional/mempool_ephemeral_dust.py --tmpdir=/tmp/ephemeral-combined
+        run: python3 build/test/functional/test_runner.py --jobs=4 --tmpdirprefix=/tmp/policy-tests mempool_subdust_fee_penalty.py mempool_ephemeral_dust.py mempool_truc.py feature_rbf.py wallet_anchor.py
       - uses: actions/cache/save@v4
         if: always()
         with:
@@ -54,9 +43,5 @@ jobs:
         with:
           name: policy-test-logs
           path: |
-            /tmp/truc-experiment
             /tmp/policy-tests
-            /tmp/truc-combined
-            /tmp/ephemeral-combined
-            /tmp/priority-control
             build/Testing/Temporary
