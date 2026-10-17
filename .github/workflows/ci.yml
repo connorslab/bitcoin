@@ -1,4 +1,4 @@
-name: Ephemeral dust rebased validation
+name: Priority fee floor rebased validation
 on:
   push:
     branches: [ci-policy-defaults]
@@ -7,11 +7,11 @@ permissions:
 jobs:
   policy:
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: 30d3ee5024c2eb74cb708ad0cc5b39990df7e5c1
+          ref: c9a6b466ec4fdf2651461a0b822bbd2c4bb76093
       - name: Record tested source
         run: git rev-parse HEAD
       - name: Dependencies
@@ -31,7 +31,19 @@ jobs:
       - name: Policy unit tests
         run: ctest --test-dir build --output-on-failure -j 4 -R 'mempool|policy|miner|transaction|rbf|validation|args|rpc.*mempool'
       - name: Functional policy tests
-        run: python3 build/test/functional/test_runner.py --jobs=4 --tmpdirprefix=/tmp/policy-tests mempool_subdust_fee_penalty.py mempool_ephemeral_dust.py mempool_truc.py feature_rbf.py wallet_anchor.py
+        run: python3 build/test/functional/test_runner.py --jobs=4 --tmpdirprefix=/tmp/policy-tests mining_priority_fee.py mining_coin_age_priority.py mining_prioritisetransaction.py mining_basic.py mempool_ephemeral_dust.py mempool_truc.py feature_rbf.py wallet_anchor.py
+      - name: Verify regression fails without fee-floor enforcement
+        run: |
+          git fetch origin 1c3e5c6e8e73866348702a20d047b2fa105a07cc --depth=1
+          git restore --source=1c3e5c6e8e73866348702a20d047b2fa105a07cc -- src/policy/coin_age_priority.cpp
+          cmake --build build -j 4
+          python3 - <<'PY'
+          import subprocess
+          r = subprocess.run(['python3', 'build/test/functional/mining_priority_fee.py', '--tmpdir=/tmp/priority-control'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+          print(r.stdout)
+          assert r.returncode != 0, 'Regression unexpectedly passed without fee-floor enforcement'
+          assert 'Priority selection bypassed the mining fee floor' in r.stdout, 'Unexpected failure instead of fee-floor bypass'
+          PY
       - uses: actions/cache/save@v4
         if: always()
         with:
@@ -44,4 +56,5 @@ jobs:
           name: policy-test-logs
           path: |
             /tmp/policy-tests
+            /tmp/priority-control
             build/Testing/Temporary
