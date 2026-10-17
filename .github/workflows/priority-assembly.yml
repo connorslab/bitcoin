@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: 64017e812b
+          ref: 64017e812b0638143e9f2349f6b01f86298c1edd
       - name: Restore release-tip integration harness
         run: |
           git fetch origin 164f735d30d5746f1debe086c0f440f2c279d2de --depth=1
@@ -71,3 +71,4 @@ jobs:
             /tmp/ephemeral-combined
             /tmp/priority-control
             build/Testing/Temporary
+
