@@ -1356,9 +1356,27 @@ bool MemPoolAccept::ReplacementChecks(ATMPArgs& args, Workspace& ws)
     if (!args.m_ignore_rejects.count("insufficient fee")) {
     if (const auto err_string{PaysForRBF(m_subpackage.m_conflicting_fees, ws.m_modified_fees, ws.m_vsize,
                                          m_pool.m_opts.incremental_relay_feerate, hash)}) {
-        // Result may change in a package context
-        return state.Invalid(TxValidationResult::TX_RECONSIDERABLE,
-                             strprintf("insufficient fee%s", ws.m_sibling_eviction ? " (including sibling eviction)" : ""), *err_string);
+        bool next_block_exception{false};
+        // Never relax direct double-spend RBF or package RBF. This opt-in
+        // experiment only evicts one policy sibling of the same TRUC parent.
+        if (m_pool.m_opts.truc_sibling_nextblock && m_pool.m_opts.truc_policy == TRUCPolicy::Enforce &&
+            m_pool.m_opts.rbf_policy != RBFPolicy::Never && ws.m_sibling_eviction &&
+            !args.m_package_submission && !args.m_package_feerates && args.m_ignore_rejects.empty() &&
+            all_conflicts.size() == 1 && ws.m_ancestors.size() == 1 &&
+            std::none_of(tx.vin.begin(), tx.vin.end(), [&](const auto& input) {
+                return m_pool.GetConflictTx(input.prevout) != nullptr;
+            })) {
+            const auto* tip = Assert(m_active_chainstate.m_chain.Tip());
+            const auto max_weight = args.m_chainparams.GetConsensus().RdtsActiveAt(tip->nHeight + 1, tip->GetMedianTimePast())
+                ? REDUCED_DATA_MAX_BLOCK_WEIGHT : MAX_BLOCK_WEIGHT;
+            next_block_exception = TrucSiblingNextBlock(m_pool, *ws.m_tx_handle,
+                **all_conflicts.begin(), **ws.m_ancestors.begin(), max_weight);
+        }
+        if (!next_block_exception) {
+            // Result may change in a package context
+            return state.Invalid(TxValidationResult::TX_RECONSIDERABLE,
+                                 strprintf("insufficient fee%s", ws.m_sibling_eviction ? " (including sibling eviction)" : ""), *err_string);
+        }
     }
     }  // ignore_rejects
 

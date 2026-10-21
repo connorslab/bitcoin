@@ -5,9 +5,11 @@
 #include <policy/rbf.h>
 
 #include <consensus/amount.h>
+#include <consensus/consensus.h>
 #include <kernel/mempool_entry.h>
 #include <policy/feerate.h>
 #include <policy/policy.h>
+#include <policy/truc_policy.h>
 #include <primitives/transaction.h>
 #include <sync.h>
 #include <tinyformat.h>
@@ -18,6 +20,8 @@
 #include <util/rbf.h>
 
 #include <limits>
+#include <map>
+#include <set>
 #include <vector>
 
 #include <compare>
@@ -204,4 +208,123 @@ std::optional<std::pair<DiagramCheckError, std::string>> ImprovesFeerateDiagram(
         return std::make_pair(DiagramCheckError::FAILURE, "insufficient feerate: does not improve feerate diagram");
     }
     return std::nullopt;
+}
+
+bool TrucSiblingNextBlock(const CTxMemPool& pool, const CTxMemPoolEntry& replacement,
+                          const CTxMemPoolEntry& sibling, const CTxMemPoolEntry& parent,
+                          int64_t block_weight_limit)
+{
+    AssertLockHeld(pool.cs);
+    // Fail closed. These are prototype resource bounds, not new transaction limits.
+    constexpr size_t MAX_ENTRIES{10000};
+    constexpr size_t MAX_WORK{2000000};
+    if (pool.size() > MAX_ENTRIES || block_weight_limit <= 4000) return false;
+    if (replacement.GetTx().version != TRUC_VERSION || sibling.GetTx().version != TRUC_VERSION ||
+        parent.GetTx().version != TRUC_VERSION || parent.GetCountWithAncestors() != 1 ||
+        parent.GetCountWithDescendants() != 2 || sibling.GetCountWithAncestors() != 2 ||
+        sibling.GetCountWithDescendants() != 1 || sibling.GetMemPoolParentsConst().size() != 1 ||
+        &sibling.GetMemPoolParentsConst().begin()->get() != &parent ||
+        replacement.GetTxSize() > TRUC_CHILD_MAX_VSIZE || sibling.GetTxSize() > TRUC_CHILD_MAX_VSIZE ||
+        parent.GetTxSize() > TRUC_MAX_VSIZE) return false;
+
+    // No operator fee deltas may manufacture eligibility. Other entries are also
+    // evaluated at actual fees, rather than local prioritisetransaction deltas.
+    for (const auto* entry : {&replacement, &sibling, &parent}) {
+        if (entry->GetFee() != entry->GetModifiedFee() || !MoneyRange(entry->GetFee())) return false;
+    }
+    // A deliberately narrow first experiment: strictly shrinking children only.
+    if (replacement.GetTxSize() >= sibling.GetTxSize()) return false;
+    // Keep an independent fee floor. This is NOT proof that aggregate relay is paid for.
+    const auto relay_floor = pool.m_opts.min_relay_feerate.GetFee(replacement.GetTxSize()) +
+                             pool.m_opts.incremental_relay_feerate.GetFee(replacement.GetTxSize());
+    if (replacement.GetFee() < relay_floor) return false;
+    // At least 25% improvement at BOTH child and parent-package levels. FeeFrac
+    // uses wide multiplication; multiplying valid fees by four/five is safe.
+    if (FeeFrac{replacement.GetFee() * 4, replacement.GetTxSize()} <<
+        FeeFrac{sibling.GetFee() * 5, sibling.GetTxSize()}) return false;
+    if (FeeFrac{(replacement.GetFee() + parent.GetFee()) * 4, replacement.GetTxSize() + parent.GetTxSize()} <<
+        FeeFrac{(sibling.GetFee() + parent.GetFee()) * 5, sibling.GetTxSize() + parent.GetTxSize()}) return false;
+
+    struct Entry {
+        const CTxMemPoolEntry* tx;
+        std::vector<size_t> parents;
+    };
+    std::vector<Entry> entries;
+    std::map<Txid, size_t> positions;
+    for (const auto& entry : pool.mapTx) {
+        positions.emplace(entry.GetTx().GetHash(), entries.size());
+        entries.push_back({&entry, {}});
+    }
+    for (auto& entry : entries) {
+        for (const auto& ancestor : entry.tx->GetMemPoolParentsConst()) {
+            entry.parents.push_back(positions.at(ancestor.get().GetTx().GetHash()));
+        }
+    }
+    const size_t parent_pos = positions.at(parent.GetTx().GetHash());
+    const size_t sibling_pos = positions.at(sibling.GetTx().GetHash());
+    const size_t replacement_pos = entries.size();
+    entries.push_back({&replacement, {parent_pos}});
+
+    size_t work{0};
+    // An intentionally simple ancestor-aware projection for review. Recompute
+    // packages after each selection; never use stale ancestor scores. Both views
+    // share a work budget and run under the same mempool lock. Optimizing this
+    // without changing its decisions is follow-up work before deployment.
+    const auto project = [&](bool replacing) -> std::optional<std::set<size_t>> {
+        std::set<size_t> selected;
+        const size_t excluded = replacing ? sibling_pos : replacement_pos;
+        int64_t weight_left{block_weight_limit - 4000};
+        int64_t sigops_left{MAX_BLOCK_SIGOPS_COST - 400};
+        while (true) {
+            std::set<size_t> best;
+            FeeFrac best_rate{0, 1};
+            Txid best_id;
+            int64_t best_weight{0}, best_sigops{0};
+            for (size_t i = 0; i < entries.size(); ++i) {
+                if (++work > MAX_WORK) return std::nullopt;
+                if (i == excluded || selected.count(i)) continue;
+                std::vector<size_t> pending{i};
+                std::set<size_t> package;
+                FeeFrac rate{0, 0};
+                int64_t weight{0}, sigops{0};
+                bool valid{true};
+                while (!pending.empty()) {
+                    if (++work > MAX_WORK) return std::nullopt;
+                    const size_t j = pending.back();
+                    pending.pop_back();
+                    if (j == excluded) { valid = false; break; }
+                    if (selected.count(j) || !package.insert(j).second) continue;
+                    const auto& entry = entries[j];
+                    if (!MoneyRange(entry.tx->GetFee())) return std::nullopt;
+                    rate += FeeFrac{entry.tx->GetFee(), entry.tx->GetTxSize()};
+                    weight += entry.tx->GetTxWeight() + entry.tx->GetExtraWeight();
+                    sigops += entry.tx->GetSigOpCost();
+                    pending.insert(pending.end(), entry.parents.begin(), entry.parents.end());
+                }
+                if (!valid || weight > weight_left || sigops > sigops_left ||
+                    rate.fee < pool.m_opts.min_relay_feerate.GetFee(rate.size)) continue;
+                const auto& id = entries[i].tx->GetTx().GetHash();
+                const auto comparison = FeeRateCompare(rate, best_rate);
+                if (best.empty() || comparison > 0 || (comparison == 0 && id < best_id)) {
+                    best = std::move(package);
+                    best_rate = rate;
+                    best_id = id;
+                    best_weight = weight;
+                    best_sigops = sigops;
+                }
+            }
+            if (best.empty()) break;
+            selected.insert(best.begin(), best.end());
+            weight_left -= best_weight;
+            sigops_left -= best_sigops;
+        }
+        return selected;
+    };
+    const auto before = project(false);
+    // Stronger than checking the old child's standalone feerate: neither old
+    // package member may already be selected. In particular, a high-fee parent
+    // must not be hidden by averaging it with a low-fee child.
+    if (!before || before->count(sibling_pos) || before->count(parent_pos)) return false;
+    const auto after = project(true);
+    return after && after->count(replacement_pos) && after->count(parent_pos);
 }

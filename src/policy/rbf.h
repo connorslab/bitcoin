@@ -125,4 +125,12 @@ std::optional<std::string> PaysForRBF(CAmount original_fees,
  */
 std::optional<std::pair<DiagramCheckError, std::string>> ImprovesFeerateDiagram(CTxMemPool::ChangeSet& changeset);
 
+/** Experimental, bounded, fee-only block projection. No mempool mutation.
+ * Return false on ambiguity/work exhaustion. Caller must establish single sibling eviction.
+ * This is not a confirmation guarantee or a consensus/mining policy change.
+ */
+bool TrucSiblingNextBlock(const CTxMemPool& pool, const CTxMemPoolEntry& replacement,
+                          const CTxMemPoolEntry& sibling, const CTxMemPoolEntry& parent,
+                          int64_t block_weight_limit) EXCLUSIVE_LOCKS_REQUIRED(pool.cs);
+
 #endif // BITCOIN_POLICY_RBF_H

@@ -307,6 +307,8 @@ util::Result<void> ApplyArgsManOptions(const ArgsManager& argsman, const CChainP
         }
     }
 
+    mempool_opts.truc_sibling_nextblock = argsman.GetBoolArg("-trucsiblingnextblock", false);
+
     if (argsman.IsArgSet("-permitephemeral")) {
         ApplyPermitEphemeralOption(argsman.GetSetting("-permitephemeral"), mempool_opts);
     }
