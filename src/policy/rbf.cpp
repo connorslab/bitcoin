@@ -7,6 +7,7 @@
 #include <consensus/amount.h>
 #include <consensus/consensus.h>
 #include <kernel/mempool_entry.h>
+#include <logging.h>
 #include <policy/feerate.h>
 #include <policy/policy.h>
 #include <policy/truc_policy.h>
@@ -266,6 +267,11 @@ bool TrucSiblingNextBlock(const CTxMemPool& pool, const CTxMemPoolEntry& replace
     entries.push_back({&replacement, {parent_pos}});
 
     size_t work{0};
+    const auto charge_work = [&]() {
+        if (++work <= MAX_WORK) return true;
+        LogDebug(BCLog::MEMPOOL, "TRUC sibling next-block projection work budget exhausted\n");
+        return false;
+    };
     // An intentionally simple ancestor-aware projection for review. Recompute
     // packages after each selection; never use stale ancestor scores. Both views
     // share a work budget and run under the same mempool lock. Optimizing this
@@ -281,7 +287,7 @@ bool TrucSiblingNextBlock(const CTxMemPool& pool, const CTxMemPoolEntry& replace
             Txid best_id;
             int64_t best_weight{0}, best_sigops{0};
             for (size_t i = 0; i < entries.size(); ++i) {
-                if (++work > MAX_WORK) return std::nullopt;
+                if (!charge_work()) return std::nullopt;
                 if (i == excluded || selected.count(i)) continue;
                 std::vector<size_t> pending{i};
                 std::set<size_t> package;
@@ -289,7 +295,7 @@ bool TrucSiblingNextBlock(const CTxMemPool& pool, const CTxMemPoolEntry& replace
                 int64_t weight{0}, sigops{0};
                 bool valid{true};
                 while (!pending.empty()) {
-                    if (++work > MAX_WORK) return std::nullopt;
+                    if (!charge_work()) return std::nullopt;
                     const size_t j = pending.back();
                     pending.pop_back();
                     if (j == excluded) { valid = false; break; }

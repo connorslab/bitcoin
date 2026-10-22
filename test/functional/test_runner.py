@@ -296,6 +296,8 @@ BASE_SCRIPTS = [
     'mempool_truc.py',
     'mempool_truc_nextblock.py',
     'mempool_truc_nextblock.py --rdts',
+    'mempool_truc_nextblock.py --rdts --stress',
+    'mempool_truc_nextblock.py --rdts --mixed',
     'wallet_txn_doublespend.py --legacy-wallet',
     'wallet_multisig_descriptor_psbt.py --descriptors',
     'wallet_miniscript_decaying_multisig_descriptor_psbt.py --descriptors',

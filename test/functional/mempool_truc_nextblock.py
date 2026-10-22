@@ -4,29 +4,39 @@
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Experimental sibling-only next-block exception (synthetic transactions)."""
 from decimal import Decimal
+from copy import deepcopy
+from time import perf_counter, time
 
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal, assert_raises_rpc_error
 from test_framework.wallet import MiniWallet
+from test_framework.script_util import PAY_TO_ANCHOR
 
 
 class TrucNextBlockTest(BitcoinTestFramework):
     def add_options(self, parser):
         parser.add_argument('--rdts', action='store_true')
+        parser.add_argument('--stress', action='store_true')
+        parser.add_argument('--mixed', action='store_true')
 
     def set_test_params(self):
-        self.num_nodes = 1
+        self.num_nodes = 2 if self.options.mixed else 1
         self.setup_clean_chain = True
         self.activation_args = ['-testactivationheight=blake2b@100', '-rdtsexpiry=2000000000'] if self.options.rdts else []
         self.extra_args = [['-persistmempool=1', '-mempooltruc=enforce', '-trucsiblingnextblock=1'] + self.activation_args]
+        if self.options.mixed:
+            self.extra_args.append(['-mempooltruc=enforce', '-trucsiblingnextblock=0'] + self.activation_args)
 
     def run_test(self):
+        if self.options.mixed:
+            return self.run_mixed()
         node = self.nodes[0]
         wallet = MiniWallet(node)
-        self.generate(wallet, 500)
+        self.generate(wallet, 2800 if self.options.stress else 800)
 
-        def restart(enabled=True, mode='enforce', core=1):
-            self.restart_node(0, extra_args=['-persistmempool=1', f'-corepolicy={core}', f'-mempooltruc={mode}', f'-trucsiblingnextblock={int(enabled)}'] + self.activation_args)
+        def restart(enabled=True, mode='enforce', core=1, fee_mining=False):
+            mining = ['-blockprioritysize=0', '-blockmaxsize=1000000', '-blockmaxweight=4000000'] if fee_mining else []
+            self.restart_node(0, extra_args=['-persistmempool=1', f'-corepolicy={core}', f'-mempooltruc={mode}', f'-trucsiblingnextblock={int(enabled)}'] + self.activation_args + mining)
             wallet.rescan_utxos()
 
         def child(utxo, fee, outputs=1, version=3):
@@ -85,9 +95,28 @@ class TrucNextBlockTest(BitcoinTestFramework):
         node.prioritisetransaction(parent['txid'], 0, -1)
         self.log.info('Native policy: same-parent smaller sibling enters next block')
         restart(core=0)
+        default_template = node.getblocktemplate({'rules': ['segwit', 'blake2b']})
+        self.log.info('Default miner selects old child: %s (projection does not model priority space)', old['txid'] in {t['txid'] for t in default_template['transactions']})
+        restart(core=0, fee_mining=True)
+        before_template = node.getblocktemplate({'rules': ['segwit', 'blake2b']})
+        assert old['txid'] not in {t['txid'] for t in before_template['transactions']}
+        before_pool = set(node.getrawmempool())
+        started = perf_counter()
+        for nonce in range(10):
+            invalid = deepcopy(honest['tx'])
+            invalid.vout[0].nValue -= nonce  # Distinct txids, not one cached rejection.
+            invalid.wit.vtxinwit[0].scriptWitness.stack[-1] = bytes(33)
+            assert_raises_rpc_error(-26, None, node.sendrawtransaction, invalid.serialize().hex())
+        self.log.info('Ten invalid-witness submissions: %.4fs', perf_counter() - started)
+        assert_equal(set(node.getrawmempool()), before_pool)
         assert_equal(node.sendrawtransaction(honest['hex']), honest['txid'])
         assert old['txid'] not in node.getrawmempool()
         assert parent['txid'] in node.getrawmempool()
+        node.setmocktime(int(time()) + 10)  # Expire the five-second template cache.
+        after_template = node.getblocktemplate({'rules': ['segwit', 'blake2b']})
+        assert honest['txid'] in {t['txid'] for t in after_template['transactions']}
+        self.log.info('Actual block-template fee delta: %d sats', sum(t['fee'] for t in after_template['transactions']) - sum(t['fee'] for t in before_template['transactions']))
+        node.setmocktime(0)
         self.log.info('No second cheap replacement once the parent is next-block eligible')
         # The existing 104-vB child cannot shrink further; this is also prevented
         # by the already-selected-package gate, independently tested below.
@@ -116,6 +145,81 @@ class TrucNextBlockTest(BitcoinTestFramework):
         funded = child(parent4['new_utxos'][0], 12000)
         assert_equal(node.sendrawtransaction(funded['hex']), funded['txid'])
 
+        self.log.info('Zero-fee parent: distinct-output sibling can recover without covering old absolute fee')
+        zero_parent, zero_old = pair(parent_fee=0)
+        zero_new = child(zero_parent['new_utxos'][1], 5000)
+        assert_equal(node.sendrawtransaction(zero_new['hex']), zero_new['txid'])
+        assert zero_old['txid'] not in node.getrawmempool()
+
+        self.log.info('Shared P2A anchor: direct conflicts remain subject to Rule 3')
+        anchor_parent = wallet.create_self_transfer_multi(confirmed_only=True, num_outputs=2, version=3, fee_per_output=0)
+        anchor_parent['tx'].vout[1].nValue += anchor_parent['tx'].vout[0].nValue - 330
+        anchor_parent['tx'].vout[0].nValue = 330
+        anchor_parent['tx'].vout[0].scriptPubKey = PAY_TO_ANCHOR
+        anchor_id = anchor_parent['tx'].rehash()
+        anchor = dict(anchor_parent['new_utxos'][0], txid=anchor_id, value=Decimal(330)/100000000)
+
+        def anchor_child(fee, outputs):
+            tx = wallet.create_self_transfer_multi(utxos_to_spend=[anchor, wallet.get_utxo(confirmed_only=True)],
+                version=3, num_outputs=outputs, fee_per_output=fee//outputs)['tx']
+            tx.wit.vtxinwit[0] = deepcopy(tx.wit.vtxinwit[0])
+            tx.wit.vtxinwit[0].scriptWitness.stack = []
+            return tx
+
+        anchor_old = anchor_child(10000, 20)
+        assert anchor_old.get_vsize() <= 1000
+        assert_equal(node.submitpackage([anchor_parent['tx'].serialize().hex(), anchor_old.serialize().hex()])['package_msg'], 'success')
+        anchor_new = anchor_child(5000, 1)
+        assert anchor_new.get_vsize() < anchor_old.get_vsize()
+        assert 5000 * anchor_old.get_vsize() > 10000 * anchor_new.get_vsize()
+        assert 10000 < 15 * (anchor_parent['tx'].get_vsize() + anchor_old.get_vsize())
+        assert 5000 > 15 * (anchor_parent['tx'].get_vsize() + anchor_new.get_vsize())
+        self.log.info('Shared anchor: old 10000 sats/%d vB; replacement 5000 sats/%d vB remains rejected', anchor_old.get_vsize(), anchor_new.get_vsize())
+        assert_raises_rpc_error(-26, 'insufficient fee', node.sendrawtransaction, anchor_new.serialize().hex())
+        assert anchor_old.rehash() in node.getrawmempool()
+
+        self.log.info('Unconfirmed Ark-shaped tree: grandchild stays forbidden until parent confirms')
+        grandchild = child(zero_new['new_utxo'], 1000)
+        assert_raises_rpc_error(-26, 'truc-ancestors-toomany', node.sendrawtransaction, grandchild['hex'])
+        self.generateblock(node, wallet.get_address(), [zero_parent['hex']])
+        delayed = wallet.create_self_transfer(utxo_to_spend=zero_new['new_utxo'], version=3,
+            sequence=1, fee=Decimal(1000)/100000000)
+        assert_raises_rpc_error(-26, 'non-BIP68-final', node.sendrawtransaction, delayed['hex'])
+        self.generateblock(node, wallet.get_address(), [zero_new['hex']])
+        assert_equal(node.sendrawtransaction(delayed['hex']), delayed['txid'])
+        self.log.info('One-block relative delay respected; serialized recovery accepted after confirmation')
+
+        self.log.info('Moving congestion can permit a second shrinking exception on the same parent')
+        drift_parent, drift_old = pair()
+        drift_first = child(drift_parent['new_utxos'][1], 8000, outputs=4)
+        node.sendrawtransaction(drift_first['hex'])
+        drift_second = child(drift_parent['new_utxos'][0], 7000)
+        reject(drift_second)
+        remaining = 199000 if self.options.rdts else 999000
+        while remaining >= 104:
+            outputs = min(230, (remaining - 61)//43)
+            size = 61 + 43*outputs
+            tx = wallet.create_self_transfer_multi(confirmed_only=True, num_outputs=outputs,
+                fee_per_output=(size*30 + outputs-1)//outputs)
+            node.sendrawtransaction(tx['hex'], 0)
+            remaining -= tx['tx'].get_vsize()
+        for _ in range(100):
+            wallet.send_self_transfer(from_node=node, confirmed_only=True, fee=Decimal(3120)/100000000)
+        assert_equal(node.sendrawtransaction(drift_second['hex']), drift_second['txid'])
+        assert drift_first['txid'] not in node.getrawmempool()
+
+        if self.options.stress:
+            self.log.info('Fail-closed work budget: add 1,500 high-feerate independent competitors')
+            for _ in range(1500):
+                wallet.send_self_transfer(from_node=node, confirmed_only=True, fee=Decimal(4160)/100000000)
+            budget_parent, budget_old = pair()
+            candidate = child(budget_parent['new_utxos'][1], 9000)
+            started = perf_counter()
+            with node.assert_debug_log(['TRUC sibling next-block projection work budget exhausted']):
+                reject(candidate)
+            self.log.info('Budget-limited rejection: %.4fs with %d entries', perf_counter() - started, len(node.getrawmempool()))
+            assert budget_old['txid'] in node.getrawmempool()
+
         self.log.info('Accept mode never gains TRUC sibling eviction from the experimental flag')
         restart(mode='accept')
         parent5 = wallet.send_self_transfer_multi(from_node=node, version=3, confirmed_only=True, num_outputs=2)
@@ -125,6 +229,60 @@ class TrucNextBlockTest(BitcoinTestFramework):
         node.sendrawtransaction(b['hex'])
         assert a['txid'] in node.getrawmempool()
         assert b['txid'] in node.getrawmempool()
+
+        self.log.info('Legacy v2 Lightning-shaped anchors: no sibling eviction; direct Rule 3 unchanged')
+        restart()
+        legacy_parent = wallet.send_self_transfer_multi(from_node=node, confirmed_only=True, version=2, num_outputs=2)
+        legacy_old = child(legacy_parent['new_utxos'][0], 10000, outputs=20, version=2)
+        node.sendrawtransaction(legacy_old['hex'])
+        reject(child(legacy_parent['new_utxos'][0], 5000, version=2))
+        legacy_other = child(legacy_parent['new_utxos'][1], 5000, version=2)
+        node.sendrawtransaction(legacy_other['hex'])
+        assert legacy_old['txid'] in node.getrawmempool()
+        assert legacy_other['txid'] in node.getrawmempool()
+
+    def run_mixed(self):
+        enabled, stock = self.nodes
+        wallet = MiniWallet(enabled)
+        self.generate(wallet, 500)
+        remaining = 199000 if self.options.rdts else 999000
+        while remaining >= 104:
+            outputs = min(230, (remaining - 61)//43)
+            size = 61 + 43*outputs
+            tx = wallet.create_self_transfer_multi(confirmed_only=True, num_outputs=outputs,
+                fee_per_output=(size*15 + outputs-1)//outputs)
+            wallet.sendrawtransaction(from_node=enabled, tx_hex=tx['hex'])
+            remaining -= tx['tx'].get_vsize()
+        for _ in range(100):
+            wallet.send_self_transfer(from_node=enabled, confirmed_only=True, fee=Decimal(1560)/100000000)
+        parent = wallet.create_self_transfer_multi(confirmed_only=True, version=3, num_outputs=2)
+        old = wallet.create_self_transfer_multi(utxos_to_spend=[parent['new_utxos'][0]], version=3,
+            num_outputs=20, fee_per_output=500)
+        enabled.submitpackage([parent['hex'], old['hex']])
+        self.sync_mempools()
+        honest = wallet.create_self_transfer(utxo_to_spend=parent['new_utxos'][1], version=3,
+            fee=Decimal(5000)/100000000)
+        self.log.info('Mixed-policy P2P: enabled node relays candidate, stock-policy peer rejects it')
+        with stock.assert_debug_log(['insufficient fee (including sibling eviction)']):
+            enabled.sendrawtransaction(honest['hex'])
+        assert honest['txid'] in enabled.getrawmempool()
+        assert old['txid'] not in enabled.getrawmempool()
+        assert old['txid'] in stock.getrawmempool()
+        assert honest['txid'] not in stock.getrawmempool()
+        self.log.info('Both policies validate a block containing the replacement; no consensus change')
+        result = self.generateblock(enabled, wallet.get_address(), [parent['hex'], honest['hex']], sync_fun=self.sync_blocks)
+        assert_equal(stock.getbestblockhash(), result['hash'])
+        # Different-output siblings are not consensus double spends. The old
+        # child may still be mined after the parent confirms.
+        assert old['txid'] in stock.getrawmempool()
+        self.log.info('Disconnect and reconsider the block on both nodes')
+        for node in self.nodes:
+            node.invalidateblock(result['hash'])
+        self.sync_blocks()
+        for node in self.nodes:
+            node.reconsiderblock(result['hash'])
+        self.sync_blocks()
+        assert_equal(enabled.getbestblockhash(), stock.getbestblockhash())
 
 
 if __name__ == '__main__':

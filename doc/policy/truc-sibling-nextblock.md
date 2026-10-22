@@ -84,6 +84,12 @@ child, local fee-delta manipulation, and exhausted projection budget.
 
 ## Testing
 
+**Deeper testing found material limitations:** shared-anchor conflicts remain
+excluded, the fee-only projection can disagree with the default miner, and its
+work budget can be exhausted at roughly 1,755 entries in the stress fixture.
+See [the detailed test report](truc-sibling-nextblock-testing.md) before drawing
+conclusions about L2 safety or deployment readiness.
+
 `mempool_truc_nextblock.py` tests empty/congested cases, feature-disabled behavior,
 direct conflict exclusion, fee deltas, native and core policy, repeated shrinking,
 ordinary funded replacement, and accept-mode isolation. Its `--rdts` variant
