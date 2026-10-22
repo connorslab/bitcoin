@@ -55,10 +55,11 @@ It does NOT reproduce arbitrary miner choices, priority space, blockmintxfee,
 blockmaxsize, private transactions, or other nodes' mempools. It is a fee-based
 policy projection, not a promise of inclusion or a complete block template.
 
-The simple reference selector is bounded to 10,000 entries and 2,000,000 work
+The research selector uses an ordered package index and updates only affected
+descendants. It is bounded to 10,000 entries and 2,000,000 work
 steps across both views, and refuses the exception on exhaustion. It uses no
 historical fee estimate, stale cached threshold, or temporary mempool mutation.
-Runtime and lock contention need substantial further work before deployment;
+Runtime and lock contention still need adversarial assessment before deployment;
 these caps are experimental resource bounds, not new mempool admission limits.
 
 ## Cases that should not use the exception
@@ -84,11 +85,13 @@ child, local fee-delta manipulation, and exhausted projection budget.
 
 ## Testing
 
-**Deeper testing found material limitations:** shared-anchor conflicts remain
+**Deeper testing of the original draft found material limitations:** shared-anchor conflicts remain
 excluded, the fee-only projection can disagree with the default miner, and its
 work budget can be exhausted at roughly 1,755 entries in the stress fixture.
 See [the detailed test report](truc-sibling-nextblock-testing.md) before drawing
 conclusions about L2 safety or deployment readiness.
+This research branch optimizes the selector without broadening eligibility;
+see [research results](truc-sibling-research.md) for current performance coverage.
 
 `mempool_truc_nextblock.py` tests empty/congested cases, feature-disabled behavior,
 direct conflict exclusion, fee deltas, native and core policy, repeated shrinking,

@@ -246,85 +246,29 @@ bool TrucSiblingNextBlock(const CTxMemPool& pool, const CTxMemPoolEntry& replace
     if (FeeFrac{(replacement.GetFee() + parent.GetFee()) * 4, replacement.GetTxSize() + parent.GetTxSize()} <<
         FeeFrac{(sibling.GetFee() + parent.GetFee()) * 5, sibling.GetTxSize() + parent.GetTxSize()}) return false;
 
-    struct Entry {
-        const CTxMemPoolEntry* tx;
-        std::vector<size_t> parents;
-    };
-    std::vector<Entry> entries;
+    std::vector<TrucProjectionEntry> entries;
     std::map<Txid, size_t> positions;
     for (const auto& entry : pool.mapTx) {
         positions.emplace(entry.GetTx().GetHash(), entries.size());
-        entries.push_back({&entry, {}});
+        entries.push_back({{entry.GetFee(), entry.GetTxSize()}, entry.GetTxWeight() + entry.GetExtraWeight(),
+            entry.GetSigOpCost(), entry.GetTx().GetHash(), {}});
     }
-    for (auto& entry : entries) {
-        for (const auto& ancestor : entry.tx->GetMemPoolParentsConst()) {
-            entry.parents.push_back(positions.at(ancestor.get().GetTx().GetHash()));
+    for (const auto& entry : pool.mapTx) {
+        auto& parents = entries[positions.at(entry.GetTx().GetHash())].parents;
+        for (const auto& ancestor : entry.GetMemPoolParentsConst()) {
+            parents.push_back(positions.at(ancestor.get().GetTx().GetHash()));
         }
     }
     const size_t parent_pos = positions.at(parent.GetTx().GetHash());
     const size_t sibling_pos = positions.at(sibling.GetTx().GetHash());
     const size_t replacement_pos = entries.size();
-    entries.push_back({&replacement, {parent_pos}});
-
+    entries.push_back({{replacement.GetFee(), replacement.GetTxSize()}, replacement.GetTxWeight() + replacement.GetExtraWeight(),
+        replacement.GetSigOpCost(), replacement.GetTx().GetHash(), {parent_pos}});
     size_t work{0};
-    const auto charge_work = [&]() {
-        if (++work <= MAX_WORK) return true;
-        LogDebug(BCLog::MEMPOOL, "TRUC sibling next-block projection work budget exhausted\n");
-        return false;
-    };
-    // An intentionally simple ancestor-aware projection for review. Recompute
-    // packages after each selection; never use stale ancestor scores. Both views
-    // share a work budget and run under the same mempool lock. Optimizing this
-    // without changing its decisions is follow-up work before deployment.
-    const auto project = [&](bool replacing) -> std::optional<std::set<size_t>> {
-        std::set<size_t> selected;
-        const size_t excluded = replacing ? sibling_pos : replacement_pos;
-        int64_t weight_left{block_weight_limit - 4000};
-        int64_t sigops_left{MAX_BLOCK_SIGOPS_COST - 400};
-        while (true) {
-            std::set<size_t> best;
-            FeeFrac best_rate{0, 1};
-            Txid best_id;
-            int64_t best_weight{0}, best_sigops{0};
-            for (size_t i = 0; i < entries.size(); ++i) {
-                if (!charge_work()) return std::nullopt;
-                if (i == excluded || selected.count(i)) continue;
-                std::vector<size_t> pending{i};
-                std::set<size_t> package;
-                FeeFrac rate{0, 0};
-                int64_t weight{0}, sigops{0};
-                bool valid{true};
-                while (!pending.empty()) {
-                    if (!charge_work()) return std::nullopt;
-                    const size_t j = pending.back();
-                    pending.pop_back();
-                    if (j == excluded) { valid = false; break; }
-                    if (selected.count(j) || !package.insert(j).second) continue;
-                    const auto& entry = entries[j];
-                    if (!MoneyRange(entry.tx->GetFee())) return std::nullopt;
-                    rate += FeeFrac{entry.tx->GetFee(), entry.tx->GetTxSize()};
-                    weight += entry.tx->GetTxWeight() + entry.tx->GetExtraWeight();
-                    sigops += entry.tx->GetSigOpCost();
-                    pending.insert(pending.end(), entry.parents.begin(), entry.parents.end());
-                }
-                if (!valid || weight > weight_left || sigops > sigops_left ||
-                    rate.fee < pool.m_opts.min_relay_feerate.GetFee(rate.size)) continue;
-                const auto& id = entries[i].tx->GetTx().GetHash();
-                const auto comparison = FeeRateCompare(rate, best_rate);
-                if (best.empty() || comparison > 0 || (comparison == 0 && id < best_id)) {
-                    best = std::move(package);
-                    best_rate = rate;
-                    best_id = id;
-                    best_weight = weight;
-                    best_sigops = sigops;
-                }
-            }
-            if (best.empty()) break;
-            selected.insert(best.begin(), best.end());
-            weight_left -= best_weight;
-            sigops_left -= best_sigops;
-        }
-        return selected;
+    const auto project = [&](bool replacing) {
+        return ProjectTrucBlock(entries, replacing ? sibling_pos : replacement_pos,
+            block_weight_limit - 4000, MAX_BLOCK_SIGOPS_COST - 400,
+            pool.m_opts.min_relay_feerate, work, MAX_WORK);
     };
     const auto before = project(false);
     // Stronger than checking the old child's standalone feerate: neither old
@@ -333,4 +277,91 @@ bool TrucSiblingNextBlock(const CTxMemPool& pool, const CTxMemPoolEntry& replace
     if (!before || before->count(sibling_pos) || before->count(parent_pos)) return false;
     const auto after = project(true);
     return after && after->count(replacement_pos) && after->count(parent_pos);
+}
+
+std::optional<std::set<size_t>> ProjectTrucBlock(const std::vector<TrucProjectionEntry>& entries,
+    size_t excluded, int64_t weight_left, int64_t sigops_left, const CFeeRate& minimum,
+    size_t& work, size_t max_work)
+{
+    if (entries.size() > 10001 || weight_left < 0 || sigops_left < 0) return std::nullopt;
+    const auto charge = [&]() {
+        if (work < max_work) { ++work; return true; }
+        LogDebug(BCLog::MEMPOOL, "TRUC sibling next-block projection work budget exhausted\n");
+        return false;
+    };
+    struct Package {
+        std::set<size_t> members;
+        FeeFrac rate{0, 0};
+        int64_t weight{0}, sigops{0};
+    };
+    std::vector<Package> packages(entries.size());
+    std::vector<std::vector<size_t>> dependents(entries.size());
+    const auto better = [&](size_t a, size_t b) {
+        const auto comparison = FeeRateCompare(packages[a].rate, packages[b].rate);
+        if (comparison != 0) return comparison > 0;
+        if (entries[a].id != entries[b].id) return entries[a].id < entries[b].id;
+        return a < b;
+    };
+    std::set<size_t, decltype(better)> ready(better);
+    // Construct each ancestor closure once. Reverse membership lets selection
+    // update only affected descendants; unrelated packages never need rescoring.
+    for (size_t i = 0; i < entries.size(); ++i) {
+        if (!charge()) return std::nullopt;
+        if (i == excluded) continue;
+        auto& package = packages[i];
+        std::vector<size_t> pending{i};
+        bool valid{true};
+        while (!pending.empty()) {
+            if (!charge()) return std::nullopt;
+            const size_t j = pending.back();
+            pending.pop_back();
+            if (j >= entries.size()) return std::nullopt;
+            if (j == excluded) { valid = false; break; }
+            if (!package.members.insert(j).second) continue;
+            const auto& entry = entries[j];
+            if (!MoneyRange(entry.rate.fee) || entry.rate.size <= 0 || entry.weight <= 0 || entry.sigops < 0) return std::nullopt;
+            if (entry.rate.fee > MAX_MONEY - package.rate.fee ||
+                entry.rate.size > std::numeric_limits<int32_t>::max() - package.rate.size ||
+                entry.weight > std::numeric_limits<int64_t>::max() - package.weight ||
+                entry.sigops > std::numeric_limits<int64_t>::max() - package.sigops) return std::nullopt;
+            package.rate += entry.rate;
+            package.weight += entry.weight;
+            package.sigops += entry.sigops;
+            pending.insert(pending.end(), entry.parents.begin(), entry.parents.end());
+        }
+        if (!valid) { package.members.clear(); continue; }
+        for (size_t j : package.members) dependents[j].push_back(i);
+        ready.insert(i);
+    }
+    std::set<size_t> selected;
+    while (!ready.empty()) {
+        if (!charge()) return std::nullopt;
+        const size_t best = *ready.begin();
+        ready.erase(ready.begin());
+        const auto& package = packages[best];
+        if (package.weight > weight_left || package.sigops > sigops_left ||
+            package.rate.fee < minimum.GetFee(package.rate.size)) continue;
+        const auto added = package.members;
+        selected.insert(added.begin(), added.end());
+        weight_left -= package.weight;
+        sigops_left -= package.sigops;
+        for (size_t j : added) ready.erase(j);
+        for (size_t j : added) {
+            for (size_t dependent : dependents[j]) {
+                if (!charge()) return std::nullopt;
+                if (selected.count(dependent)) continue;
+                // Erase before changing comparator keys. A previously skipped
+                // package may become viable after an ancestor is selected.
+                ready.erase(dependent);
+                auto& updated = packages[dependent];
+                if (updated.members.erase(j)) {
+                    updated.rate -= entries[j].rate;
+                    updated.weight -= entries[j].weight;
+                    updated.sigops -= entries[j].sigops;
+                }
+                ready.insert(dependent);
+            }
+        }
+    }
+    return selected;
 }

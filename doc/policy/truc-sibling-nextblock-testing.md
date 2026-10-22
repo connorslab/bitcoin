@@ -1,5 +1,9 @@
 # TRUC sibling next-block experiment: deeper testing
 
+This report records the original draft at `f1fa0d3605`. The separate research
+branch changes projection performance; see [research results](truc-sibling-research.md).
+The original work-budget failure below is retained as historical evidence.
+
 ## Assessment
 
 The exception removes the absolute-fee barrier in the tested **different-output

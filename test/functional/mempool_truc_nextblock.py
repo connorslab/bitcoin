@@ -209,16 +209,15 @@ class TrucNextBlockTest(BitcoinTestFramework):
         assert drift_first['txid'] not in node.getrawmempool()
 
         if self.options.stress:
-            self.log.info('Fail-closed work budget: add 1,500 high-feerate independent competitors')
+            self.log.info('Indexed projection: add 1,500 high-feerate independent competitors')
             for _ in range(1500):
                 wallet.send_self_transfer(from_node=node, confirmed_only=True, fee=Decimal(4160)/100000000)
             budget_parent, budget_old = pair()
             candidate = child(budget_parent['new_utxos'][1], 9000)
             started = perf_counter()
-            with node.assert_debug_log(['TRUC sibling next-block projection work budget exhausted']):
-                reject(candidate)
-            self.log.info('Budget-limited rejection: %.4fs with %d entries', perf_counter() - started, len(node.getrawmempool()))
-            assert budget_old['txid'] in node.getrawmempool()
+            assert_equal(node.sendrawtransaction(candidate['hex']), candidate['txid'])
+            self.log.info('Indexed projection acceptance: %.4fs with %d entries', perf_counter() - started, len(node.getrawmempool()))
+            assert budget_old['txid'] not in node.getrawmempool()
 
         self.log.info('Accept mode never gains TRUC sibling eviction from the experimental flag')
         restart(mode='accept')
@@ -263,7 +262,9 @@ class TrucNextBlockTest(BitcoinTestFramework):
         honest = wallet.create_self_transfer(utxo_to_spend=parent['new_utxos'][1], version=3,
             fee=Decimal(5000)/100000000)
         self.log.info('Mixed-policy P2P: enabled node relays candidate, stock-policy peer rejects it')
-        with stock.assert_debug_log(['insufficient fee (including sibling eviction)']):
+        # Inventory relay is asynchronous and randomized; the default two-second
+        # log timeout can expire before announcement under concurrent test load.
+        with stock.assert_debug_log(['insufficient fee (including sibling eviction)'], timeout=60):
             enabled.sendrawtransaction(honest['hex'])
         assert honest['txid'] in enabled.getrawmempool()
         assert old['txid'] not in enabled.getrawmempool()

@@ -133,4 +133,20 @@ bool TrucSiblingNextBlock(const CTxMemPool& pool, const CTxMemPoolEntry& replace
                           const CTxMemPoolEntry& sibling, const CTxMemPoolEntry& parent,
                           int64_t block_weight_limit) EXCLUSIVE_LOCKS_REQUIRED(pool.cs);
 
+/** Immutable DAG input to the experimental fee-only projection. */
+struct TrucProjectionEntry {
+    FeeFrac rate;
+    int64_t weight;
+    int64_t sigops;
+    Txid id;
+    std::vector<size_t> parents;
+};
+
+/** Select ancestor packages without modifying the mempool. Excluded may equal
+ * entries.size() to exclude nothing. The caller supplies a shared work counter.
+ * This models fee-only selection, not arbitrary miner priorities. */
+std::optional<std::set<size_t>> ProjectTrucBlock(const std::vector<TrucProjectionEntry>& entries,
+    size_t excluded, int64_t weight_left, int64_t sigops_left, const CFeeRate& minimum,
+    size_t& work, size_t max_work);
+
 #endif // BITCOIN_POLICY_RBF_H
