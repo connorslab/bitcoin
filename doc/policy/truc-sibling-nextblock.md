@@ -1,9 +1,9 @@
 # Draft: next-block-gated TRUC sibling eviction
 
-This document describes the original upstream draft. The research branch adds a
-miner-configuration guard and a separately enabled shared-anchor experiment;
-see [current research status](truc-sibling-research.md) for the effective scope
-and remaining blockers. The original draft has not been replaced.
+This document records the original design. The updated draft also includes a
+miner-configuration guard and a separately enabled shared-anchor experiment.
+See [current scope and testing](truc-sibling-research.md) for the effective rules,
+validation results and remaining work; the original scope below is historical.
 
 This is an **opt-in policy experiment**, disabled by default. It is separate
 from changing the default TRUC mode. Enable with both `-mempooltruc=enforce`

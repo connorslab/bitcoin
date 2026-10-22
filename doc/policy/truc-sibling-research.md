@@ -1,8 +1,8 @@
-# Separate research branch: indexed next-block projection
+# TRUC next-block experiment: current scope and testing
 
-Branch: `research/truc-sibling-projection`, starting from draft commit
-`f1fa0d3605`. This work is separate from the upstream draft PR. It remains opt-in
-and is not a production recommendation.
+This report covers the indexed projection, shared-anchor extension and miner
+guard included in the updated draft. The experiment remains opt-in and is not
+a production recommendation. Earlier test results are identified below.
 
 ## Improvement
 
@@ -117,7 +117,7 @@ Logs are archived outside this repository under
 `operations/truc-policy-tests/sibling-nextblock/research/anchor-*.log` in the
 operations workspace.
 
-## Still unresolved — do not squash into a replacement draft yet
+## Remaining work before considering production use
 
 1. Default priority mining is guarded out, not modeled. Exact fee-only miner
    equivalence and dynamic template settings still require further work.
