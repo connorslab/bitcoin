@@ -125,8 +125,15 @@ std::optional<std::string> PaysForRBF(CAmount original_fees,
  */
 std::optional<std::pair<DiagramCheckError, std::string>> ImprovesFeerateDiagram(CTxMemPool::ChangeSet& changeset);
 
+/** Exactly one shared input, the parent's P2A output; one parent input per child.
+ * Caller must additionally establish a single unconfirmed parent and conflict. */
+bool IsTrucSharedAnchorConflict(const CTransaction& replacement, const CTransaction& previous,
+                               const CTransaction& parent);
+
 /** Experimental, bounded, fee-only block projection. No mempool mutation.
- * Return false on ambiguity/work exhaustion. Caller must establish single sibling eviction.
+ * Return false on ambiguity/work exhaustion. Caller must establish a single policy
+ * sibling eviction or separately enabled shared-anchor conflict, and compatible
+ * miner settings. This still does not reproduce every BlockAssembler heuristic.
  * This is not a confirmation guarantee or a consensus/mining policy change.
  */
 bool TrucSiblingNextBlock(const CTxMemPool& pool, const CTxMemPoolEntry& replacement,

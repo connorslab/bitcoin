@@ -799,4 +799,36 @@ BOOST_AUTO_TEST_CASE(truc_projection_independent_load_and_limits)
     BOOST_CHECK(!ProjectTrucBlock(entries, entries.size(), 796000, 79600, CFeeRate{1000}, work, 2000000));
 }
 
+BOOST_AUTO_TEST_CASE(truc_shared_anchor_scope)
+{
+    CMutableTransaction parent;
+    parent.version = 3;
+    parent.vout.emplace_back(330, CScript() << OP_1 << std::vector<unsigned char>{0x4e, 0x73});
+    parent.vout.emplace_back(10000, CScript() << OP_TRUE);
+    CMutableTransaction old, replacement;
+    old.version = replacement.version = 3;
+    old.vin.emplace_back(COutPoint{parent.GetHash(), 0});
+    replacement.vin = old.vin;
+    const auto check = [&]() { return IsTrucSharedAnchorConflict(CTransaction{replacement}, CTransaction{old}, CTransaction{parent}); };
+    BOOST_CHECK(check());
+    old.vin.emplace_back(COutPoint{Txid::FromUint256(uint256{1}), 0});
+    replacement.vin.emplace_back(COutPoint{Txid::FromUint256(uint256{2}), 0});
+    BOOST_CHECK(check());
+    replacement.vin.back() = old.vin.back();
+    BOOST_CHECK(!check()); // Confirmed fee inputs must not also conflict.
+    replacement.vin.pop_back();
+    replacement.vin.emplace_back(COutPoint{parent.GetHash(), 1});
+    BOOST_CHECK(!check()); // No additional common-parent input.
+    replacement.vin.pop_back();
+    replacement.version = 2;
+    BOOST_CHECK(!check());
+    replacement.version = 3;
+    old.vin[0].prevout.n = replacement.vin[0].prevout.n = 1;
+    BOOST_CHECK(!check()); // Non-P2A direct conflicts remain excluded.
+    old.vin[0].prevout.n = replacement.vin[0].prevout.n = 2;
+    BOOST_CHECK(!check()); // Out-of-bounds output.
+    old.vin[0].prevout.n = 0;
+    BOOST_CHECK(!check()); // No shared anchor.
+}
+
 BOOST_AUTO_TEST_SUITE_END()

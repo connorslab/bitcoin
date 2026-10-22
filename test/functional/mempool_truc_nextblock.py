@@ -23,9 +23,10 @@ class TrucNextBlockTest(BitcoinTestFramework):
         self.num_nodes = 2 if self.options.mixed else 1
         self.setup_clean_chain = True
         self.activation_args = ['-testactivationheight=blake2b@100', '-rdtsexpiry=2000000000'] if self.options.rdts else []
-        self.extra_args = [['-persistmempool=1', '-mempooltruc=enforce', '-trucsiblingnextblock=1'] + self.activation_args]
+        self.fee_args = ['-blockmintxfee=0.00001000', '-minrelaytxfee=0.00001000']
+        self.extra_args = [['-persistmempool=1', '-mempooltruc=enforce', '-trucsiblingnextblock=1'] + self.activation_args + self.fee_args]
         if self.options.mixed:
-            self.extra_args.append(['-mempooltruc=enforce', '-trucsiblingnextblock=0'] + self.activation_args)
+            self.extra_args.append(['-mempooltruc=enforce', '-trucsiblingnextblock=0'] + self.activation_args + self.fee_args)
 
     def run_test(self):
         if self.options.mixed:
@@ -34,9 +35,9 @@ class TrucNextBlockTest(BitcoinTestFramework):
         wallet = MiniWallet(node)
         self.generate(wallet, 2800 if self.options.stress else 800)
 
-        def restart(enabled=True, mode='enforce', core=1, fee_mining=False):
-            mining = ['-blockprioritysize=0', '-blockmaxsize=1000000', '-blockmaxweight=4000000'] if fee_mining else []
-            self.restart_node(0, extra_args=['-persistmempool=1', f'-corepolicy={core}', f'-mempooltruc={mode}', f'-trucsiblingnextblock={int(enabled)}'] + self.activation_args + mining)
+        def restart(enabled=True, mode='enforce', core=1, fee_mining=False, shared=False, overrides=None):
+            mining = ['-blockprioritysize=0', '-blockmaxsize=4000000', '-blockmaxweight=4000000'] if fee_mining else []
+            self.restart_node(0, extra_args=['-persistmempool=1', f'-corepolicy={core}', f'-mempooltruc={mode}', f'-trucsiblingnextblock={int(enabled)}', f'-trucsharedanchornextblock={int(shared)}'] + self.activation_args + self.fee_args + mining + (overrides or []))
             wallet.rescan_utxos()
 
         def child(utxo, fee, outputs=1, version=3):
@@ -93,10 +94,19 @@ class TrucNextBlockTest(BitcoinTestFramework):
         node.prioritisetransaction(parent['txid'], 0, 1)
         reject(honest)
         node.prioritisetransaction(parent['txid'], 0, -1)
-        self.log.info('Native policy: same-parent smaller sibling enters next block')
+        competitor = next(txid for txid in node.getrawmempool() if txid not in [parent['txid'], old['txid']])
+        node.prioritisetransaction(competitor, 0, 1)
+        reject(honest)
+        node.prioritisetransaction(competitor, 0, -1)
+        self.log.info('Native default miner: incompatible projection must fail closed')
         restart(core=0)
         default_template = node.getblocktemplate({'rules': ['segwit', 'blake2b']})
         self.log.info('Default miner selects old child: %s (projection does not model priority space)', old['txid'] in {t['txid'] for t in default_template['transactions']})
+        reject(honest)
+        assert old['txid'] in node.getrawmempool()
+        for setting in ['-blockmaxweight=700000', '-blockmaxsize=100000', '-blockreservedweight=12000', '-blockmintxfee=0.00002000']:
+            restart(overrides=[setting])
+            reject(honest)
         restart(core=0, fee_mining=True)
         before_template = node.getblocktemplate({'rules': ['segwit', 'blake2b']})
         assert old['txid'] not in {t['txid'] for t in before_template['transactions']}
@@ -116,6 +126,7 @@ class TrucNextBlockTest(BitcoinTestFramework):
         after_template = node.getblocktemplate({'rules': ['segwit', 'blake2b']})
         assert honest['txid'] in {t['txid'] for t in after_template['transactions']}
         self.log.info('Actual block-template fee delta: %d sats', sum(t['fee'] for t in after_template['transactions']) - sum(t['fee'] for t in before_template['transactions']))
+        assert sum(t['fee'] for t in after_template['transactions']) >= sum(t['fee'] for t in before_template['transactions'])
         node.setmocktime(0)
         self.log.info('No second cheap replacement once the parent is next-block eligible')
         # The existing 104-vB child cannot shrink further; this is also prevented
@@ -177,6 +188,34 @@ class TrucNextBlockTest(BitcoinTestFramework):
         self.log.info('Shared anchor: old 10000 sats/%d vB; replacement 5000 sats/%d vB remains rejected', anchor_old.get_vsize(), anchor_new.get_vsize())
         assert_raises_rpc_error(-26, 'insufficient fee', node.sendrawtransaction, anchor_new.serialize().hex())
         assert anchor_old.rehash() in node.getrawmempool()
+        restart(shared=True)
+        # Mempool reload admits transactions individually, not as packages.
+        # Restore zero-fee parent packages explicitly after changing the opt-in.
+        if anchor_old.rehash() not in node.getrawmempool():
+            assert_equal(node.submitpackage([anchor_parent['tx'].serialize().hex(), anchor_old.serialize().hex()])['package_msg'], 'success')
+        if zero_new['txid'] not in node.getrawmempool():
+            assert_equal(node.submitpackage([zero_parent['hex'], zero_new['hex']])['package_msg'], 'success')
+        assert anchor_old.rehash() in node.getrawmempool()
+        assert zero_new['txid'] in node.getrawmempool()
+        before_anchor_template = node.getblocktemplate({'rules': ['segwit', 'blake2b']})
+        assert anchor_old.rehash() not in {t['txid'] for t in before_anchor_template['transactions']}
+        before_anchor = set(node.getrawmempool())
+        invalid_anchor = deepcopy(anchor_new)
+        invalid_anchor.wit.vtxinwit[1].scriptWitness.stack[-1] = bytes(33)
+        assert_raises_rpc_error(-26, None, node.sendrawtransaction, invalid_anchor.serialize().hex())
+        assert_equal(set(node.getrawmempool()), before_anchor)
+        assert_equal(node.sendrawtransaction(anchor_new.serialize().hex()), anchor_new.rehash())
+        assert anchor_old.rehash() not in node.getrawmempool()
+        node.setmocktime(int(time()) + 10)
+        anchor_template = node.getblocktemplate({'rules': ['segwit', 'blake2b']})
+        assert anchor_new.rehash() in {t['txid'] for t in anchor_template['transactions']}
+        assert sum(t['fee'] for t in anchor_template['transactions']) >= sum(t['fee'] for t in before_anchor_template['transactions'])
+        node.setmocktime(0)
+        self.log.info('Opt-in shared P2A anchor recovery accepted and selected by fee-only miner')
+        wallet.rescan_utxos()  # Account for packages restored after restart and raw anchor sends.
+        non_anchor_parent, non_anchor_old = pair()
+        reject(child(non_anchor_parent['new_utxos'][0], 5000))
+        assert non_anchor_old['txid'] in node.getrawmempool()
 
         self.log.info('Unconfirmed Ark-shaped tree: grandchild stays forbidden until parent confirms')
         grandchild = child(zero_new['new_utxo'], 1000)

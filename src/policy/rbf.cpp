@@ -211,6 +211,26 @@ std::optional<std::pair<DiagramCheckError, std::string>> ImprovesFeerateDiagram(
     return std::nullopt;
 }
 
+bool IsTrucSharedAnchorConflict(const CTransaction& replacement, const CTransaction& previous,
+                               const CTransaction& parent)
+{
+    if (replacement.version != TRUC_VERSION || previous.version != TRUC_VERSION || parent.version != TRUC_VERSION) return false;
+    std::set<COutPoint> old_inputs;
+    size_t old_parent_inputs{0}, new_parent_inputs{0}, shared{0};
+    for (const auto& input : previous.vin) {
+        old_inputs.insert(input.prevout);
+        old_parent_inputs += input.prevout.hash == parent.GetHash();
+    }
+    for (const auto& input : replacement.vin) {
+        new_parent_inputs += input.prevout.hash == parent.GetHash();
+        if (!old_inputs.count(input.prevout)) continue;
+        if (input.prevout.hash != parent.GetHash() || input.prevout.n >= parent.vout.size() ||
+            !parent.vout[input.prevout.n].scriptPubKey.IsPayToAnchor()) return false;
+        ++shared;
+    }
+    return shared == 1 && old_parent_inputs == 1 && new_parent_inputs == 1;
+}
+
 bool TrucSiblingNextBlock(const CTxMemPool& pool, const CTxMemPoolEntry& replacement,
                           const CTxMemPoolEntry& sibling, const CTxMemPoolEntry& parent,
                           int64_t block_weight_limit)
@@ -219,7 +239,7 @@ bool TrucSiblingNextBlock(const CTxMemPool& pool, const CTxMemPoolEntry& replace
     // Fail closed. These are prototype resource bounds, not new transaction limits.
     constexpr size_t MAX_ENTRIES{10000};
     constexpr size_t MAX_WORK{2000000};
-    if (pool.size() > MAX_ENTRIES || block_weight_limit <= 4000) return false;
+    if (pool.size() > MAX_ENTRIES || block_weight_limit <= DEFAULT_BLOCK_RESERVED_WEIGHT) return false;
     if (replacement.GetTx().version != TRUC_VERSION || sibling.GetTx().version != TRUC_VERSION ||
         parent.GetTx().version != TRUC_VERSION || parent.GetCountWithAncestors() != 1 ||
         parent.GetCountWithDescendants() != 2 || sibling.GetCountWithAncestors() != 2 ||
@@ -249,6 +269,8 @@ bool TrucSiblingNextBlock(const CTxMemPool& pool, const CTxMemPoolEntry& replace
     std::vector<TrucProjectionEntry> entries;
     std::map<Txid, size_t> positions;
     for (const auto& entry : pool.mapTx) {
+        // Local fee deltas on competitors can also change the miner's boundary.
+        if (entry.GetFee() != entry.GetModifiedFee()) return false;
         positions.emplace(entry.GetTx().GetHash(), entries.size());
         entries.push_back({{entry.GetFee(), entry.GetTxSize()}, entry.GetTxWeight() + entry.GetExtraWeight(),
             entry.GetSigOpCost(), entry.GetTx().GetHash(), {}});
@@ -267,7 +289,7 @@ bool TrucSiblingNextBlock(const CTxMemPool& pool, const CTxMemPoolEntry& replace
     size_t work{0};
     const auto project = [&](bool replacing) {
         return ProjectTrucBlock(entries, replacing ? sibling_pos : replacement_pos,
-            block_weight_limit - 4000, MAX_BLOCK_SIGOPS_COST - 400,
+            block_weight_limit - DEFAULT_BLOCK_RESERVED_WEIGHT - 1, MAX_BLOCK_SIGOPS_COST - 401,
             pool.m_opts.min_relay_feerate, work, MAX_WORK);
     };
     const auto before = project(false);
